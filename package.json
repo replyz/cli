@@ -1,0 +1,43 @@
+{
+  "name": "@replyz/cli",
+  "version": "0.1.0",
+  "description": "Official Replyz command-line interface: an email inbox for your AI agent (signup, wait for codes, read mail).",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://replyz.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/replyz/cli.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "replyz": "dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bugs": {
+    "url": "https://github.com/replyz/cli/issues"
+  }
+}
