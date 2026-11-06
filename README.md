@@ -7,7 +7,9 @@
 
 # replyz/cli
 
-Official Replyz command-line interface.
+The official **Replyz CLI**: give your AI agent its own email inbox from the terminal. It will create inboxes, wait for incoming email (`replyz wait --for code`), and extract verification codes and links, so agents like Claude Code, OpenClaw and Hermes can handle email on their own.
+
+Hosted in the EU. Not for bulk, marketing or disposable email.
 
 **Status:** in development, first release soon.
 
