@@ -40,8 +40,10 @@ Usage: replyz <command> [options] [--json]
        [--otp] [--link] [--new]
                         Wait for mail. Mail from the last 10 minutes counts, so trigger the email first.
                         --otp/--link return the verification code and/or link. --new: only unseen mail.
-  tell-human --subject <subject> <text>
-                        Email your human. Not available yet (answers sender_unavailable).
+  tell-human [--inbox <id>] --subject <subject> <text>
+                        Email the human who claimed this account (only them, at most 10 a day; "queued" is not
+                        "delivered"). Errors: not_claimed, sender_unavailable, sender_quota, email_human_limit,
+                        email_human_paused, sending_paused, recipient_suppressed: tell your human in your own chat.
   mcp install [--client claude-code|cursor|print]
                         Connect an MCP client to the remote Replyz MCP server (default: print the config).
 
@@ -65,7 +67,7 @@ const COMMANDS: Record<
     values: ["inbox", "from", "subject", "since", "timeout"],
     bools: ["otp", "link", "new"],
   },
-  "tell-human": { run: tellHuman, values: ["subject"], bools: [] },
+  "tell-human": { run: tellHuman, values: ["subject", "inbox"], bools: [] },
   mcp: { run: mcp, values: ["client"], bools: [] },
 };
 
@@ -123,7 +125,10 @@ export async function main(
             "Retry; if it persists, report it to hello@replyz.io.",
           );
     if (json) io.out(JSON.stringify({ error: e.toJSON() }, null, 2));
-    else io.err(`Error (${e.code}): ${e.message}\nFix: ${e.fix}`);
+    else
+      io.err(
+        `Error (${e.code}): ${e.message}\nFix: ${e.fix}${e.retryAfterS !== null ? `\nRetry after: ${e.retryAfterS} s` : ""}`,
+      );
     return e.code === "usage" ? EXIT.usage : EXIT.error;
   }
 }

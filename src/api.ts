@@ -12,11 +12,19 @@ export class CliError extends Error {
     message: string,
     readonly fix: string,
     readonly status: number | null = null,
+    /** Seconds from the Retry-After header, when the API sent one (429 and some 503 answers). */
+    readonly retryAfterS: number | null = null,
   ) {
     super(message);
   }
   toJSON() {
-    return { code: this.code, status: this.status, message: this.message, fix: this.fix };
+    return {
+      code: this.code,
+      status: this.status,
+      message: this.message,
+      fix: this.fix,
+      ...(this.retryAfterS !== null ? { retry_after_s: this.retryAfterS } : {}),
+    };
   }
 }
 
@@ -80,11 +88,13 @@ export class Api {
     }
     if (res.ok) return data as T;
     const p = (data ?? {}) as { code?: unknown; message?: unknown; fix?: unknown };
+    const retryAfter = Number(res.headers.get("retry-after"));
     throw new CliError(
       typeof p.code === "string" ? p.code : "http_error",
       typeof p.message === "string" ? p.message : `HTTP ${res.status} from ${url.pathname}.`,
       typeof p.fix === "string" ? p.fix : "Retry in a few seconds.",
       res.status,
+      Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : null,
     );
   }
 }

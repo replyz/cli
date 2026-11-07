@@ -115,6 +115,7 @@ export async function signup(p: Parsed, ctx: Ctx): Promise<Result> {
         org_id: r.org_id,
         inbox_id: r.inbox.id,
         address: r.inbox.address,
+        claim_url: r.claim_url,
         api_base: api.base,
         created_at: new Date().toISOString(),
       },
@@ -183,9 +184,18 @@ function noticeLines(notices: Notice[]): string[] {
 }
 
 export async function status(_p: Parsed, ctx: Ctx): Promise<Result> {
-  const { api } = await authedApi(ctx);
-  const a = await api.get<Record<string, unknown>>("/v1/account");
-  // --json passes the account through unchanged (notices included); the human form lists notices first.
+  const { api, creds } = await authedApi(ctx);
+  const fromApi = await api.get<Record<string, unknown>>("/v1/account");
+  // While the account is not claimed, show the claim link saved at signup, so an agent in a new session can
+  // give it to its human again (qa, 7 Nov). Once claimed (or from another API), it is not shown.
+  const keepLink =
+    fromApi.status === "sandbox" &&
+    typeof creds?.claim_url === "string" &&
+    creds.api_base === api.base &&
+    !ctx.env.REPLYZ_API_KEY;
+  const a: Record<string, unknown> = keepLink ? { ...fromApi, claim_url: creds?.claim_url } : fromApi;
+  // --json passes the account through (notices included) and adds only the saved claim link while the account is a
+  // sandbox; the human form lists notices first.
   const notices = Array.isArray(a.notices) ? (a.notices as Notice[]) : [];
   return {
     data: a,
@@ -390,16 +400,52 @@ function verificationResult(m: WaitMessage): Result {
 
 // ---- tell-human ---------------------------------------------------------------------------------
 
-export async function tellHuman(p: Parsed, _ctx: Ctx): Promise<Result> {
-  if (!strFlag(p, "subject") || !p.positionals[1])
-    throw usage('Use `replyz tell-human --subject "…" "text"`.');
-  // Emailing the human is not available yet: answer `sender_unavailable`, like the MCP tool.
-  throw new CliError(
-    "sender_unavailable",
-    "Emailing your human is not available yet.",
-    "Tell your human in your own chat or channel instead.",
-    503,
-  );
+/** Codes after which the agent should tell the human in its own chat (they never reach the human by email). */
+const TELL_IN_CHAT = new Set([
+  "sender_unavailable",
+  "sender_quota",
+  "not_claimed",
+  "email_human_paused",
+  "sending_paused",
+  "recipient_suppressed",
+  "email_human_limit",
+]);
+
+/**
+ * Emails the account's own human (the person who claimed it): POST /v1/inboxes/{id}/email-human. There is no
+ * way to choose the recipient. `202` means queued, not delivered. Each refusal keeps the API's code and fix; when
+ * the fix does not already say so, "tell your human in your own chat" is added, and a Retry-After is passed on.
+ */
+export async function tellHuman(p: Parsed, ctx: Ctx): Promise<Result> {
+  const subject = strFlag(p, "subject");
+  const text = p.positionals[1];
+  if (!subject || !text) throw usage('Use `replyz tell-human --subject "…" "text"`.');
+  const { api, creds } = await authedApi(ctx);
+  const inboxId = await resolveInbox(api, creds, p, ctx);
+  try {
+    const r = await api.post<{ id: string; status: string; queued_at: string }>(
+      `/v1/inboxes/${encodeURIComponent(inboxId)}/email-human`,
+      { subject, text },
+    );
+    // Queued is not delivered: say so, so the agent doesn't tell its human "I sent it" (qa, 7 Nov).
+    const next =
+      "Queued: accepted, not yet delivered. Tell your human it is usually quick but can be delayed or dropped, and don't say it was delivered.";
+    return {
+      data: { ...r, next },
+      lines: [`Queued for your human (${r.id}).`, next],
+    };
+  } catch (err) {
+    if (err instanceof CliError && TELL_IN_CHAT.has(err.code) && !/own chat/i.test(err.fix)) {
+      throw new CliError(
+        err.code,
+        err.message,
+        `${err.fix} Tell your human in your own chat or channel instead.`,
+        err.status,
+        err.retryAfterS,
+      );
+    }
+    throw err;
+  }
 }
 
 // ---- mcp install --------------------------------------------------------------------------------

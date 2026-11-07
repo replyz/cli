@@ -16,6 +16,8 @@ export interface Credentials {
   address?: string;
   /** The API the key belongs to (local dev keys must not be sent to production). */
   api_base?: string;
+  /** The link the human opens to claim the account (shown by `status` until it is claimed; the file is owner-only). */
+  claim_url?: string;
   created_at?: string;
 }
 
