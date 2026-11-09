@@ -18,6 +18,10 @@ export interface Credentials {
   api_base?: string;
   /** The link the human opens to claim the account (shown by `status` until it is claimed; the file is owner-only). */
   claim_url?: string;
+  /** When the sandbox ends (from signup): the date in the message for the human, and in the reminders after signup. */
+  expires_at?: string;
+  /** How many agent reminders (nudge.ts) have been shown after signup. */
+  reminders_shown?: number;
   created_at?: string;
 }
 

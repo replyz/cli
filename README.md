@@ -10,11 +10,11 @@
 An email inbox for your AI agent, from the command line. The agent signs itself up, gets its own
 address on `youreplyz.com`, and waits for verification codes and links. It receives mail; the only mail it can send is a short note to your own human (`tell-human`).
 
-> Status: early access (`0.2.0`). Whether signups are open right now is shown on https://replyz.io; while they are closed, `signup` answers `signups_disabled`.
+> Status: early access (`0.2.1`). Whether signups are open right now is shown on https://replyz.io; while they are closed, `signup` answers `signups_disabled`.
 
 ```bash
-npx -y @replyz/cli@0.2.0 signup --name scout --json      # once: account + inbox, key saved for you
-npx -y @replyz/cli@0.2.0 wait --otp --from "*@service.com" --json
+npx -y @replyz/cli@0.2.1 signup --name scout --json      # once: account + inbox, key saved for you
+npx -y @replyz/cli@0.2.1 wait --otp --from "*@service.com" --json
 ```
 
 Node.js 22 or newer. No runtime dependencies.

@@ -20,6 +20,7 @@ import {
   tellHuman,
   wait,
 } from "./commands.js";
+import { agentReminder, REMIND_ON, reminderLines } from "./nudge.js";
 import { VERSION } from "./version.js";
 
 export { VERSION };
@@ -109,8 +110,20 @@ export async function main(
       ...(fetchImpl ? { fetch: fetchImpl } : {}),
     };
     const r = await cmd.run(parsed, ctx);
-    if (json) io.out(JSON.stringify(r.data, null, 2));
-    else {
+    // For the AGENT, not the human: the claim message again, for a few commands after signup (nudge.ts).
+    const reminder = REMIND_ON.has(name) ? await agentReminder(ctx) : null;
+    if (json) {
+      const plain = typeof r.data === "object" && r.data !== null && !Array.isArray(r.data);
+      io.out(
+        JSON.stringify(
+          reminder && plain ? { agent_reminder: reminder, ...(r.data as Record<string, unknown>) } : r.data,
+          null,
+          2,
+        ),
+      );
+    } else {
+      // stderr, so `inbox ls | head -1` and other pipes still get only the answer on stdout (builder review)
+      if (reminder) io.err(reminderLines(reminder).join("\n"));
       if (r.warn) io.err(r.warn);
       io.out(r.lines.join("\n"));
     }

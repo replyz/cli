@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { Api, CliError, DEFAULT_API } from "./api.js";
 import { intFlag, type Parsed, strFlag, usage } from "./args.js";
 import { type Credentials, credentialsPath, loadCredentials, saveCredentials } from "./config.js";
+import { TEXT_END_MARKER, TEXT_START_MARKER } from "./markers.js";
 import { solvePow } from "./pow.js";
 
 export const DEFAULT_MCP_URL = "https://mcp.replyz.io/mcp";
@@ -34,7 +35,7 @@ export interface Result {
   warn?: string;
 }
 
-function apiBase(ctx: Ctx): string {
+export function apiBase(ctx: Ctx): string {
   return ctx.env.REPLYZ_API || DEFAULT_API;
 }
 
@@ -87,6 +88,23 @@ interface SignupResponse {
   privacy_url: string;
 }
 
+/** "2026-11-14" (UTC) from an ISO time, or the text as it is when it does not parse. */
+function utcDate(iso: string): string {
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? iso : new Date(t).toISOString().slice(0, 10);
+}
+
+/**
+ * The message the agent gives its human right after signup (cmo's copy, docs/marketing/CLAIM-FIRST.md, version B
+ * with the true date and the "no pressure" line; the skill says the same). It says what the agent has, what is at
+ * stake (the sandbox expires), and the one thing the human does, and it lets the human say no. It promises
+ * nothing Replyz may not have switched on: no "so I can email you" (only true once sending is on), no price,
+ * no "approve" or "verify".
+ */
+export function humanMessage(address: string, expiresAt: string, claimUrl: string): string {
+  return `I have my own email now: ${address}. To keep this account (otherwise it expires on ${utcDate(expiresAt)} UTC), open this link and send one email from your own address: ${claimUrl} Nothing is charged. If you'd rather not, ignore this: I keep working until then.`;
+}
+
 export async function signup(p: Parsed, ctx: Ctx): Promise<Result> {
   const name = strFlag(p, "name");
   if (!name) throw usage("signup needs --name <name> (it becomes the start of your address).");
@@ -116,6 +134,7 @@ export async function signup(p: Parsed, ctx: Ctx): Promise<Result> {
         inbox_id: r.inbox.id,
         address: r.inbox.address,
         claim_url: r.claim_url,
+        expires_at: r.expires_at,
         api_base: api.base,
         created_at: new Date().toISOString(),
       },
@@ -124,9 +143,17 @@ export async function signup(p: Parsed, ctx: Ctx): Promise<Result> {
   } catch (err) {
     saveError = (err as Error).message;
   }
+  const message = humanMessage(r.inbox.address, r.expires_at, r.claim_url);
   // The key is printed only when asked, or when it could not be saved (it is shown ONCE by the API).
   const showKey = p.flags["print-key"] === true || saved === null;
+  // tell_your_human and next come FIRST: an agent reading the JSON top-down sees them before anything else
+  // (qa's R0 on 27c0937: in a bigger task the message was paraphrased, and once never given).
   const data = {
+    tell_your_human: message,
+    next:
+      saved !== null
+        ? "You have NOT told your human yet, and they can't see this output. Start your reply to them with the text in tell_your_human, word for word, with the claim_url in full. Use your own chat only; never send the claim link anywhere else. Your API key is saved; the CLI uses it automatically."
+        : `You have NOT told your human yet, and they can't see this output. Start your reply to them with the text in tell_your_human, word for word, in your own chat only. Could not save the key (${saveError}): store api_key now as REPLYZ_API_KEY, it is shown only once.`,
     org_id: r.org_id,
     status: r.status,
     inbox: r.inbox,
@@ -138,22 +165,25 @@ export async function signup(p: Parsed, ctx: Ctx): Promise<Result> {
     api_key_saved: saved !== null,
     credentials_file: saved,
     ...(showKey ? { api_key: r.api_key } : {}),
-    next:
-      saved !== null
-        ? "Your API key is saved; the CLI uses it automatically. Tell your human your address and send them claim_url."
-        : `Could not save the key (${saveError}). Store api_key now as REPLYZ_API_KEY: it is shown only once.`,
   };
   return {
     data,
     lines: [
+      "You have NOT told your human yet, and they can't see this output. Start your reply to them with the text below, word for word, with the link in full (your own chat only; never send the claim link anywhere else).",
+      TEXT_START_MARKER,
+      message,
+      TEXT_END_MARKER,
+      "",
       `Address:    ${r.inbox.address}`,
       `Inbox id:   ${r.inbox.id}`,
       `Status:     ${r.status} (expires ${r.expires_at})`,
-      `Claim URL:  ${r.claim_url}  (send this to your human)`,
+      `Claim URL:  ${r.claim_url}  (for your human only)`,
       saved
         ? `API key:    saved in ${saved}`
         : `API key:    ${r.api_key}  (NOT saved: store it now, shown once)`,
       ...(showKey && saved ? [`API key:    ${r.api_key}`] : []),
+      "",
+      "NEXT (again): you have not told your human yet. Write the message above in your reply to them, word for word. Don't summarise it, and don't offer to send or post the link anywhere else.",
     ],
   };
 }
@@ -188,14 +218,26 @@ export async function status(_p: Parsed, ctx: Ctx): Promise<Result> {
   const fromApi = await api.get<Record<string, unknown>>("/v1/account");
   // While the account is not claimed, show the claim link saved at signup, so an agent in a new session can
   // give it to its human again (qa, 7 Nov). Once claimed (or from another API), it is not shown.
+  const stillRunning =
+    typeof fromApi.expires_at !== "string" ||
+    Date.parse(fromApi.expires_at) > Date.now() ||
+    Number.isNaN(Date.parse(fromApi.expires_at));
   const keepLink =
     fromApi.status === "sandbox" &&
+    stillRunning &&
     typeof creds?.claim_url === "string" &&
     creds.api_base === api.base &&
     !ctx.env.REPLYZ_API_KEY;
-  const a: Record<string, unknown> = keepLink ? { ...fromApi, claim_url: creds?.claim_url } : fromApi;
-  // --json passes the account through (notices included) and adds only the saved claim link while the account is a
-  // sandbox; the human form lists notices first.
+  const expires = typeof fromApi.expires_at === "string" ? utcDate(fromApi.expires_at) : null;
+  const a: Record<string, unknown> = keepLink
+    ? {
+        ...fromApi,
+        claim_url: creds?.claim_url,
+        reminder: `Not claimed yet${expires ? `: this account expires on ${expires} UTC` : ""}. If your human hasn't seen the claim_url, give it to them once, in your own chat only. Never send it anywhere else.`,
+      }
+    : fromApi;
+  // --json passes the account through (notices included) and adds only the saved claim link and a one-line
+  // reminder while the account is a sandbox; the human form lists notices first.
   const notices = Array.isArray(a.notices) ? (a.notices as Notice[]) : [];
   return {
     data: a,
