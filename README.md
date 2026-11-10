@@ -10,11 +10,11 @@
 An email inbox for your AI agent, from the command line. The agent signs itself up, gets its own
 address on `youreplyz.com`, and waits for verification codes and links. It receives mail; the only mail it can send is a short note to your own human (`tell-human`).
 
-> Status: early access (`0.2.1`). Whether signups are open right now is shown on https://replyz.io; while they are closed, `signup` answers `signups_disabled`.
+> Status: early access (`0.2.2`). Whether signups are open right now is shown on https://replyz.io; while they are closed, `signup` answers `signups_disabled`.
 
 ```bash
-npx -y @replyz/cli@0.2.1 signup --name scout --json      # once: account + inbox, key saved for you
-npx -y @replyz/cli@0.2.1 wait --otp --from "*@service.com" --json
+npx -y @replyz/cli@0.2.2 signup --name scout --json      # once: account + inbox, key saved for you
+npx -y @replyz/cli@0.2.2 wait --otp --from "*@service.com" --json
 ```
 
 Node.js 22 or newer. No runtime dependencies.
@@ -23,7 +23,7 @@ Node.js 22 or newer. No runtime dependencies.
 
 | Command | What it does |
 | --- | --- |
-| `signup --name <name> [--force] [--print-key]` | Creates a sandbox account (7 days) with one inbox. Solves a small proof of work. Saves the API key to `~/.config/replyz/credentials.json` (mode 0600); `--print-key` also prints it. Refuses if this machine already has an account, unless `--force` |
+| `signup --name <name> [--force] [--print-key]` | Creates a sandbox account (24 hours) with one inbox. Solves a small proof of work. Saves the API key to `~/.config/replyz/credentials.json` (mode 0600); `--print-key` also prints it. Refuses if this machine already has an account, unless `--force` |
 | `status` | Account status, expiry, limits and usage |
 | `inbox ls` / `inbox create [--name] [--display-name]` | List or create inboxes |
 | `messages ls [--inbox] [--unread] [--from] [--since] [--limit]` | Recent messages, newest first |
