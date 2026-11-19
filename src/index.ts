@@ -15,6 +15,7 @@ import {
   messages,
   type Result,
   read,
+  reply,
   signup,
   status,
   tellHuman,
@@ -45,6 +46,11 @@ Usage: replyz <command> [options] [--json]
                         Email the human who claimed this account (only them, at most 10 a day; "queued" is not
                         "delivered"). Errors: not_claimed, sender_unavailable, sender_quota, email_human_limit,
                         email_human_paused, sending_paused, recipient_suppressed: tell your human in your own chat.
+  reply <message_id> [--text <text>]
+                        One plain-text reply to the sender of a received message (text from stdin if --text is
+                        absent). You never choose the recipient. Claimed accounts on the 21 Nov 2026 terms or
+                        later, DMARC-aligned senders only; "queued" is not "delivered". Errors: terms_required,
+                        recipient_not_allowed, reply_content, reply_cap, sending_paused, recipient_suppressed.
   mcp install [--client claude-code|cursor|print]
                         Connect an MCP client to the remote Replyz MCP server (default: print the config).
 
@@ -63,6 +69,8 @@ const COMMANDS: Record<
   inbox: { run: inbox, values: ["name", "display-name"], bools: [] },
   messages: { run: messages, values: ["inbox", "from", "since", "limit"], bools: ["unread"] },
   read: { run: read, values: [], bools: ["html"] },
+  // Built, not announced (Phase 2): no line in HELP until the PM says replies go live (see commands.ts).
+  reply: { run: reply, values: ["text"], bools: [] },
   wait: {
     run: wait,
     values: ["inbox", "from", "subject", "since", "timeout"],
@@ -75,6 +83,8 @@ const COMMANDS: Record<
 export interface Io {
   out: (s: string) => void;
   err: (s: string) => void;
+  /** All of stdin as text, or undefined when stdin is a terminal (the `reply` text when --text is not given). */
+  readStdin?: () => Promise<string>;
 }
 
 /** Runs one CLI invocation and returns the exit code (separate from process.exit for tests). */
@@ -108,6 +118,7 @@ export async function main(
         if (!json) io.err(l);
       },
       ...(fetchImpl ? { fetch: fetchImpl } : {}),
+      ...(io.readStdin ? { readStdin: io.readStdin } : {}),
     };
     const r = await cmd.run(parsed, ctx);
     // For the AGENT, not the human: the claim message again, for a few commands after signup (nudge.ts).

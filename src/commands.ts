@@ -5,6 +5,7 @@
 // Email content is untrusted: the human form says so on stderr, the JSON keeps the API's own
 // safety fields (sender_trust, injection_risk, safety.*).
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +26,8 @@ export interface Ctx {
   fetch?: typeof fetch;
   /** Progress messages (stderr). */
   log: (line: string) => void;
+  /** Reads all of stdin as text; absent when stdin is a terminal (used by `reply` when --text is not given). */
+  readStdin?: () => Promise<string>;
 }
 
 export interface Result {
@@ -109,11 +112,13 @@ export async function signup(p: Parsed, ctx: Ctx): Promise<Result> {
   const name = strFlag(p, "name");
   if (!name) throw usage("signup needs --name <name> (it becomes the start of your address).");
   const existing = await loadCredentials(ctx.env);
-  if (existing && !p.flags.force) {
+  // REPLYZ_API_KEY counts like a saved key: an agent given an inbox key must not sign up for its own account.
+  const hasKey = existing || ctx.env.REPLYZ_API_KEY;
+  if (hasKey && !p.flags.force) {
     // One agent, one account: a second signup would create a second sandbox account.
     throw new CliError(
       "already_signed_up",
-      `This machine already has a Replyz account (${existing.address ?? existing.org_id ?? "saved key"}).`,
+      `This machine already has a Replyz account (${existing?.address ?? existing?.org_id ?? "saved key or REPLYZ_API_KEY"}).`,
       "Use it (`replyz status`). Only if you really need a new account, run signup again with --force.",
     );
   }
@@ -338,6 +343,49 @@ export async function read(p: Parsed, ctx: Ctx): Promise<Result> {
       String(m.text ?? ""),
     ],
     warn: UNTRUSTED_NOTE,
+  };
+}
+
+// ---- reply --------------------------------------------------------------------------------------
+
+/**
+ * `replyz reply <message_id> [--text <text>]` (text from stdin when --text is absent): one plain-text reply to the
+ * person who wrote that message. Reads the message for its thread (GET /v1/messages/{id}, which marks it as read),
+ * then POST /v1/threads/{thread_id}/reply {in_reply_to_message_id, text} (operationId replyToThread).
+ *
+ * The agent never chooses the recipient: the API answers with `to`, the authenticated sender of THAT message.
+ * The Idempotency-Key is derived from message + text, so a retried command sends one email, not two.
+ *
+ * Live since 18 Nov 2026 (0.3.0): announced in `replyz help`, the README and the skill. The route answers 403
+ * terms_required for an account that is not on the 21 Nov 2026 terms or later.
+ */
+export async function reply(p: Parsed, ctx: Ctx): Promise<Result> {
+  const msgId = p.positionals[1];
+  if (!msgId) throw usage("Use `replyz reply <message_id> --text <text>` (or pipe the text on stdin).");
+  let text = strFlag(p, "text");
+  if (text === undefined) {
+    if (!ctx.readStdin) throw usage("Give the reply with --text <text>, or pipe it on stdin.");
+    text = (await ctx.readStdin()).replace(/\s+$/, "");
+  }
+  if (text.length === 0) throw usage("The reply text is empty.");
+  const { api } = await authedApi(ctx);
+  const m = await api.get<{ thread_id?: unknown }>(`/v1/messages/${encodeURIComponent(msgId)}`);
+  if (typeof m.thread_id !== "string" || !/^thr_[0-9A-HJKMNP-TV-Z]{26}$/.test(m.thread_id)) {
+    throw new CliError("internal_error", "The message has no thread id.", "Retry in a few seconds.", 500);
+  }
+  const key = `cli-${createHash("sha256").update(`${msgId}\n${text}`).digest("hex")}`;
+  const r = await api.post<{ to?: string; status?: string }>(
+    `/v1/threads/${m.thread_id}/reply`,
+    { in_reply_to_message_id: msgId, text },
+    30_000,
+    { "idempotency-key": key },
+  );
+  // Queued is not delivered: say so, so the agent doesn't tell its human "I sent it".
+  const next =
+    "Queued: accepted, not yet delivered. It is usually quick but can be delayed or dropped; do not say it was delivered.";
+  return {
+    data: { ...r, next },
+    lines: [`Queued reply to ${String(r.to ?? "(unknown)")}.`, next],
   };
 }
 

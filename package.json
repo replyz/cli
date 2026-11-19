@@ -1,6 +1,6 @@
 {
   "name": "@replyz/cli",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Official Replyz command-line interface: an email inbox for your AI agent (signup, wait for codes, read mail).",
   "type": "module",
   "license": "MIT",

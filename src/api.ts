@@ -14,6 +14,8 @@ export class CliError extends Error {
     readonly status: number | null = null,
     /** Seconds from the Retry-After header, when the API sent one (429 and some 503 answers). */
     readonly retryAfterS: number | null = null,
+    /** The API problem's `reason` (a fixed code such as too_many_links), when it has one. */
+    readonly reason: string | null = null,
   ) {
     super(message);
   }
@@ -23,6 +25,7 @@ export class CliError extends Error {
       status: this.status,
       message: this.message,
       fix: this.fix,
+      ...(this.reason !== null ? { reason: this.reason } : {}),
       ...(this.retryAfterS !== null ? { retry_after_s: this.retryAfterS } : {}),
     };
   }
@@ -51,16 +54,29 @@ export class Api {
     return this.request<T>("GET", path, query, undefined, timeoutMs);
   }
 
-  post<T>(path: string, body: unknown = {}, timeoutMs = 30_000): Promise<T> {
-    return this.request<T>("POST", path, {}, body, timeoutMs);
+  post<T>(
+    path: string,
+    body: unknown = {},
+    timeoutMs = 30_000,
+    extraHeaders: Record<string, string> = {},
+  ): Promise<T> {
+    return this.request<T>("POST", path, {}, body, timeoutMs, extraHeaders);
   }
 
-  private async request<T>(method: string, path: string, query: Query, body: unknown, timeoutMs: number) {
+  private async request<T>(
+    method: string,
+    path: string,
+    query: Query,
+    body: unknown,
+    timeoutMs: number,
+    extraHeaders: Record<string, string> = {},
+  ) {
     const url = new URL(this.base + path);
     for (const [k, v] of Object.entries(query)) if (v !== undefined) url.searchParams.set(k, String(v));
     const headers: Record<string, string> = {
       accept: "application/json",
       "user-agent": `replyz-cli/${VERSION} node/${process.versions.node}`,
+      ...extraHeaders,
     };
     if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`;
     if (body !== undefined) headers["content-type"] = "application/json";
@@ -87,7 +103,7 @@ export class Api {
       // not JSON: handled below
     }
     if (res.ok) return data as T;
-    const p = (data ?? {}) as { code?: unknown; message?: unknown; fix?: unknown };
+    const p = (data ?? {}) as { code?: unknown; message?: unknown; fix?: unknown; reason?: unknown };
     const retryAfter = Number(res.headers.get("retry-after"));
     throw new CliError(
       typeof p.code === "string" ? p.code : "http_error",
@@ -95,6 +111,7 @@ export class Api {
       typeof p.fix === "string" ? p.fix : "Retry in a few seconds.",
       res.status,
       Number.isFinite(retryAfter) && retryAfter > 0 ? Math.ceil(retryAfter) : null,
+      typeof p.reason === "string" ? p.reason : null,
     );
   }
 }
